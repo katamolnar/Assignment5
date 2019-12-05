@@ -1,0 +1,261 @@
+---
+title: "Assignment 5 - Meta-analysis of pitch in schizophrenia"
+author: "Study Group5"
+date: "5/12/2019"
+output:  
+    md_document:
+    variant: markdown_github
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Building on the shoulders of giants: meta-analysis
+
+## Questions to be answered
+
+1. What is the current evidence for distinctive vocal patterns in schizophrenia? Report how many papers report quantitative estimates, comment on what percentage of the overall studies reviewed they represent (see PRISMA chart) your method to analyze them, the estimated effect size of the difference (mean effect size and standard error) and forest plots representing it. N.B. Only measures of pitch mean and pitch sd are required for the assignment. Feel free to ignore the rest (although pause behavior looks interesting, if you check my article).
+
+2. Do the results match your own analysis from Assignment 3? If you add your results to the meta-analysis, do the estimated effect sizes change? Report the new estimates and the new forest plots.
+
+3. Assess the quality of the literature: report and comment on heterogeneity of the studies (tau, I2), on publication bias (funnel plot), and on influential studies.
+
+## Tips on the process to follow:
+
+- Download the data on all published articles analyzing voice in schizophrenia and the prisma chart as reference of all articles found and reviewed
+- Look through the dataset to find out which columns to use, and if there is any additional information written as comments (real world data is always messy!).
+    * Hint: PITCH_F0M and PITCH_F0SD group of variables are what you need
+    * Hint: Make sure you read the comments in the columns: `pitch_f0_variability`, `frequency`, `Title`,  `ACOUST_ANA_DESCR`, `DESCRIPTION`, and `COMMENTS`
+- Following the procedure in the slides calculate effect size and standard error of the effect size per each study. N.B. we focus on pitch mean and pitch standard deviation.
+ . first try using lmer (to connect to what you know of mixed effects models)
+ . then use rma() (to get some juicy additional statistics)
+
+- Build a forest plot of the results (forest(model))
+ 
+- Go back to Assignment 3, add your own study to the data table, and re-run meta-analysis. Do the results change?
+
+- Now look at the output of rma() and check tau and I2
+
+
+```{r}
+#n1: sample_size_SC
+#n2: sample_size_HC
+
+#m1: pitch_F0_SZ_M
+#m2: pitch_F0_HC_M
+
+#sd1: pitch_F0_SZ_SD
+#sd2: pitch_F0_HC_SD
+
+#add sd like: pitch_F0_SD_HC_M to every type (hogy miért az jó kérdés)
+
+#f1 and f2 to be as far as possible
+#because if they are close, that means they are hard to separate
+#in Danish: they are close
+#in English: they are far
+
+############
+
+#so many NAs, each study has 1 row, és nem biztos hogy mindegyik measure-t tartalmazta amit keresünk
+
+##################
+#hogy számoljuk ki az effect sizeot?
+# (m1-m2)/sqr(pooled_sd) -> package that implemented: metafor package, function: escalc (effect size calculation)
+
+# what is i? ni1, mi1, sdi1 -> calculation is on study level
+
+#yi, vi to output dataframe
+
+```
+
+```{r}
+#install.packages("metafor")
+library(metafor)
+pacman::p_load(lme4, lmerTest, ggplot2, tidyverse)
+
+metadata <- readxl::read_xlsx("Matrix_MetaAnalysis_Diagnosis_updated290719.xlsx")
+
+#smd: standardized mean difference: 
+pitchm_es <- escalc(measure = "SMD", n1i = SAMPLE_SIZE_SZ, n2i = SAMPLE_SIZE_HC, m1i = PITCH_F0_SZ_M, m2i = PITCH_F0_HC_M, sd1i = PITCH_F0_SZ_SD, sd2i = PITCH_F0_HC_SD, data = metadata)
+
+pitchsd_es <- escalc(measure = "SMD", n1i = SAMPLE_SIZE_SZ, n2i = SAMPLE_SIZE_HC, m1i = PITCH_F0SD_SZ_M, m2i = PITCH_F0SD_HC_M, sd1i = PITCH_F0SD_SZ_SD, sd2i = PITCH_F0SD_HC_SD, data = metadata)
+
+#for each study:
+#n1i: sample size of SCZ
+#n2i: sample size of HC
+#m1i: mean oitch for SCZ
+#m2i: mean pitch HC
+#sd1i: standard deviation of pitch of SCZ
+#sd2i: standard deviation of pitch of HC
+    #think of it as a variability of pitch
+
+#smd = cohen's d = effect size
+
+#we get: standardized measure of the difference between the mean of the two groups in each study
+#calculated: mean estimated eff size within each study(: within because in studies might done things differently) + variance
+#new columns: yi and vi
+    #yi: vector to specify the observed effect size or outcomes
+    #vi: vector to specify the corresponding sampling variances (sd in each study, measure of mean variability) (sd of smd) UNCERTAINTY
+
+#randomized measures: you should expect these measures
+
+#we are never certain -> we want to estimate a measure of uncertainty
+#take random pair: calc diff, take other pair, calc diff, etc.....
+#what is the average difference? the average error when I use the mean expected variance (SD: mean error, variance is that just squared)
+
+#high variance = low weight
+#weights = 1/vi
+
+#merge the new variables with the original data
+data <- metadata %>% mutate(esmean = pitchm_es$yi, varmean = pitchm_es$vi)
+data <- data %>% mutate(essd = pitchsd_es$yi, varsd = pitchsd_es$vi)
+
+#model <- lmer(1 + (1 | Study, weights = 1/vi))
+
+model1 <- lmer(esmean ~ 1 + (1|StudyID), data, weights = 1/varmean, REML=F, control = lmerControl(check.nobs.vs.nlev = "ignore", check.nobs.vs.nRE = "ignore"))
+summary(model1)
+
+model2 <- lmer(essd ~ 1 + (1|StudyID), data, weights = 1/varsd, REML=F, control = lmerControl(check.nobs.vs.nlev = "ignore", check.nobs.vs.nRE = "ignore"))
+summary(model2)
+
+#forest plot: if studies on both sides: they do not go in the same direction -> they do not find significantly similar results (p value is also not significant)
+
+#rma (regression meta analysis): same as lmer, BUT is wrapping the output in a way that lets you use the forest things
+
+#on mean model
+model3 <-  rma(esmean, varmean, data = data, slab=StudyID)
+summary(model3) #sample from same population, is the difference between studies reducible to that?
+forest(model3) #size of the square: size of sample size (numbers: standard deviation, numbersS in parentheses are confidence intervals)
+    #best would be if they were on the same side on zero and kind of on top of each other
+funnel(model3) #the smaller the sample size, the bigger the effect size
+    #each dot is a different study, y-axis: larger studies with higher power towards top, lower powered studies          towards the bottom
+infm <- influence(model3) #shows influential data points (that give big variance (aka outliers))
+print(infm) #influential data point from study 11 (not 13 as in plot shows)
+plot(infm)
+
+#to see if there are any publication bias (assymmetry in the funnel plot)
+regtest(model3)
+ranktest(model3)
+
+#Taskm <-  rma(esmean, varmean, mods = cbind(Language), data = data, slab=StudyID)
+#forest(Taskm)
+
+
+#on sd model
+model4 <-  rma(essd, varsd, data = data, slab=StudyID)
+summary(model4)
+forest(model4)
+funnel(model4)
+
+infsd <- influence(model4)
+print(infsd)
+plot(infsd) #influential data point is study 15 not 17, R just tries to make the plot pretty 
+
+#to see if there are any publication bias (assymmetry in the funnel plot)
+regtest(model4)
+ranktest(model4)
+
+#Tasksd <-  rma(essd, varsd, mods = cbind(Language), data = data, slab=StudyID)
+#forest(Tasksd)
+
+#the higher the SE, the smaller the sample size
+
+```
+
+```{r}
+#last task: take own data and add them to meta analysis
+#from assignment3, how do we add that model to the meta analysis?
+#yi, vi for my analysis (up to us how we consider using it)
+#calculate yi(cohen's d: standardized mean diff: diff between 2 groups in which the output measure has been scaled) and vi
+#yi: pitch mean~diagnosis (1|...) beta for diagnosis is yi
+#vi: squared sd, so we want the sd: mindkettő okés
+    # 1: beta comes with SE -> take SE as SD
+    # 2: SD: average error in our prediction, lmer model spit out residual, average residual is the SD -> we square it, we get to vi
+        #taking a datapoint, I am predicting it is the mean: what is the error -> do it it with all datapoints -> average the error(difference) -> average error         when making a pred from the model
+        #average residual is SD, then square it to get vi
+#SD for weights
+#big sds are getting even bigger, penalizing studies with small sample sizes or with big errors -> if you are bad, double punishment on you! haha
+
+#we can use our models in multiple ways: meta analysis, extract cohen's d
+
+#if we used more than 1 studies: 1+Diagnosis | STudy how each study is deviating from the main effect, beta and 7 values (if 7 studies extact with: ranef(model))
+
+#load Danish SCZ data from Assignment 3
+danish <- read.csv("danishdata.csv")
+
+sum <- danish %>% group_by(Diagnosis) %>% 
+  summarise("SampleSize" = nlevels(as.factor(uID)),
+            "MeanofMean" = mean(mean),
+            "SDofMean" = sd(mean), 
+            "MeanofSD" = mean(sd), 
+            "SDofSD" = sd(sd))
+
+new <- data.frame("StudyID" = 60, 
+                  "SAMPLE_SIZE_SZ" = sum$SampleSize[sum$Diagnosis == 1], 
+                  "SAMPLE_SIZE_HC" = sum$SampleSize[sum$Diagnosis == 0],
+                  "PITCH_F0_SZ_M" = sum$MeanofMean[sum$Diagnosis == 1],
+                  "PITCH_F0_HC_M" = sum$MeanofMean[sum$Diagnosis == 0],
+                  "PITCH_F0_SZ_SD" = sum$SDofMean[sum$Diagnosis == 1], 
+                  "PITCH_F0_HC_SD" = sum$SDofMean[sum$Diagnosis == 0],
+                  "PITCH_F0SD_SZ_M" = sum$MeanofSD[sum$Diagnosis == 1],
+                  "PITCH_F0SD_HC_M" = sum$MeanofSD[sum$Diagnosis == 0],
+                  "PITCH_F0SD_SZ_SD" = sum$SDofSD[sum$Diagnosis == 1], 
+                  "PITCH_F0SD_HC_SD" = sum$SDofSD[sum$Diagnosis == 0])
+
+pitchm_es2 <- escalc(measure = "SMD", n1i = SAMPLE_SIZE_SZ, n2i = SAMPLE_SIZE_HC, m1i = PITCH_F0_SZ_M, m2i = PITCH_F0_HC_M, sd1i = PITCH_F0_SZ_SD, sd2i = PITCH_F0_HC_SD, data = new)
+
+pitchsd_es2 <- escalc(measure = "SMD", n1i = SAMPLE_SIZE_SZ, n2i = SAMPLE_SIZE_HC, m1i = PITCH_F0SD_SZ_M, m2i = PITCH_F0SD_HC_M, sd1i = PITCH_F0SD_SZ_SD, sd2i = PITCH_F0SD_HC_SD, data = new)
+
+
+new2 <- new %>% mutate(esmean = pitchm_es2$yi, varmean = pitchm_es2$vi)
+new22 <- new2 %>% mutate(essd = pitchsd_es2$yi, varsd = pitchsd_es2$vi)
+
+data2 <- bind_rows(data, new22)
+
+write.csv(data2, "all_merged.csv")
+
+
+#yi: beta for diagnosis
+#vi: average residuals is SD, then square it to get vi
+
+
+model1_all <- lmer(esmean ~ 1 + (1|StudyID), data2, weights = 1/varmean, REML=F, 
+                   control = lmerControl(check.nobs.vs.nlev = "ignore", check.nobs.vs.nRE = "ignore"))
+summary(model1_all)
+
+model2_all <- lmer(essd ~ 1 + (1|StudyID), data2, weights = 1/varsd, REML=F, 
+                   control = lmerControl(check.nobs.vs.nlev = "ignore", check.nobs.vs.nRE = "ignore"))
+summary(model2_all)
+
+### on mean model
+model3_all <-  rma(esmean, varmean, data = data2, slab=StudyID)
+summary(model3_all) #sample from same population, is the difference between studies reducible to that?
+forest(model3_all) #size of the square: size of sample size (numbers: standard deviation, numbersS in parentheses are confidence intervals)
+funnel(model3_all) #the smaller the sample size, the bigger the effect size
+    #each dot is a different study, y-axis: larger studies with higher power towards top, lower powered studies          towards the bottom
+infm_all <- influence(model3_all) #shows influential data points (that give big variance (aka outliers))
+print(infm_all) #influential data point from study 11 (not 13 as in plot shows)
+plot(infm_all)
+
+#to see if there are any publication bias (assymmetry in the funnel plot)
+regtest(model3_all)
+ranktest(model3_all)
+
+### on sd model
+model4_all <-  rma(essd, varsd, data = data2, slab=StudyID)
+summary(model4_all) #sample from same population, is the difference between studies reducible to that?
+forest(model4_all) #size of the square: size of sample size (numbers: standard deviation, numbersS in parentheses are confidence intervals)
+funnel(model4_all) #the smaller the sample size, the bigger the effect size
+    #each dot is a different study, y-axis: larger studies with higher power towards top, lower powered studies          towards the bottom
+infsd_all <- influence(model4_all) #shows influential data points (that give big variance (aka outliers))
+print(infsd_all) #influential data point from study 11 (not 13 as in plot shows)
+plot(infsd_all)
+
+#to see if there are any publication bias (assymmetry in the funnel plot)
+regtest(model4_all)
+ranktest(model4_all)
+
+#sd: pitch variability between groups
+
+```
